@@ -42,6 +42,12 @@ const T = {
     perItem: "per item", perHr: "per hr", or: "or",
     lIng: "Ingredients", lPkg: "Packaging", lLab: "Labor", lOh: "Overhead", lDel: "Delivery",
     visitSite: "Visit haseeb.app",
+    downloadPdf: "Download Report (PDF)",
+    pdfTitle: "Haseeb — Cost Report",
+    pdfGenerated: "Generated on",
+    pdfBatch: "Batch size",
+    pdfNone: "Not entered",
+    downloading: "Generating...",
   },
   ar: {
     appName: "حسيب", subtitle: "حاسبة التكاليف", tagline: "حوّل شغلك البيتي لبزنس محترف",
@@ -84,6 +90,12 @@ const T = {
     perItem: "للحبة", perHr: "بالساعة", or: "أو",
     lIng: "المكونات", lPkg: "التغليف", lLab: "العمالة", lOh: "المصاريف", lDel: "التوصيل",
     visitSite: "زور haseeb.app",
+    downloadPdf: "حمّل التقرير (PDF)",
+    pdfTitle: "حسيب — تقرير التكاليف",
+    pdfGenerated: "تم إنشاؤه في",
+    pdfBatch: "حجم الدفعة",
+    pdfNone: "ما تم إدخاله",
+    downloading: "جاري التحميل...",
   },
 };
 
@@ -172,6 +184,201 @@ const Plus = ()=><svg width="18" height="18" fill="none" viewBox="0 0 24 24" str
 const Trash = ()=><svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m2 0v14a2 2 0 01-2 2H8a2 2 0 01-2-2V6h12z"/></svg>;
 const Chev = ({open})=><svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5" style={{transition:"transform 0.2s",transform:open?"rotate(180deg)":"rotate(0)"}}><path d="M6 9l6 6 6-6"/></svg>;
 const ExtLink = ()=><svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg>;
+const DownloadIcon = ()=><svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>;
+
+/* ── PDF Generation ── */
+const generatePDF = async (products, lang) => {
+  const t = T[lang];
+  const cur = CUR[lang];
+  const isRtl = lang === "ar";
+
+  // Dynamically load jsPDF
+  const script = document.createElement("script");
+  script.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js";
+  document.head.appendChild(script);
+  await new Promise((res, rej) => { script.onload = res; script.onerror = rej; });
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const W = 210, H = 297, M = 18;
+  const pw = W - M * 2;
+  let y = M;
+
+  const addPage = () => { doc.addPage(); y = M; };
+  const checkPage = (need) => { if (y + need > H - M) addPage(); };
+
+  const drawLine = (y1, color = "#e0e0e0") => { doc.setDrawColor(color); doc.setLineWidth(0.3); doc.line(M, y1, W - M, y1); };
+
+  const text = (str, x, yy, opts = {}) => {
+    doc.setFont("helvetica", opts.bold ? "bold" : "normal");
+    doc.setFontSize(opts.size || 10);
+    doc.setTextColor(opts.color || "#0a0a0a");
+    const align = opts.align || "left";
+    doc.text(String(str), x, yy, { align });
+  };
+
+  const tableRow = (label, value, yy, opts = {}) => {
+    text(label, M, yy, { size: 9, color: "#525252" });
+    text(String(value), W - M, yy, { size: 9, bold: true, align: "right", ...opts });
+  };
+
+  // ─── HEADER ───
+  doc.setFillColor("#0a0a0a");
+  doc.rect(0, 0, W, 38, "F");
+  text("Haseeb", M, 16, { size: 22, bold: true, color: "#ffffff" });
+  text(t.subtitle, M, 24, { size: 11, color: "#a3a3a3" });
+  text(t.tagline, M, 31, { size: 9, color: "#737373" });
+  text("www.haseeb.app", W - M, 16, { size: 9, color: "#a3a3a3", align: "right" });
+  const now = new Date();
+  text(`${t.pdfGenerated}: ${now.toLocaleDateString(lang === "ar" ? "ar-KW" : "en-US")}`, W - M, 24, { size: 8, color: "#737373", align: "right" });
+  y = 48;
+
+  // ─── PRODUCTS ───
+  products.forEach((p, pIdx) => {
+    const c = doCalc(p);
+    const name = p.name || t.newProduct;
+
+    checkPage(60);
+
+    // Product header
+    doc.setFillColor("#f5f5f5");
+    doc.roundedRect(M, y, pw, 12, 2, 2, "F");
+    text(`${pIdx + 1}. ${name}`, M + 4, y + 8, { size: 12, bold: true });
+    if (p.batchYield) text(`${t.pdfBatch}: ${p.batchYield} ${p.productUnit}`, W - M - 4, y + 8, { size: 9, color: "#525252", align: "right" });
+    y += 18;
+
+    // ── Results Summary ──
+    if (c.valid) {
+      doc.setFillColor("#0a0a0a");
+      doc.roundedRect(M, y, pw, 30, 3, 3, "F");
+      text(t.costUnit, M + 6, y + 8, { size: 8, color: "#a3a3a3" });
+      text(`${cur} ${fmt(c.costPerUnit)}`, M + 6, y + 16, { size: 14, bold: true, color: "#ffffff" });
+      const sp = parseFloat(p.sellPrice) || 0;
+      if (sp > 0) {
+        const isLoss = c.profit < 0;
+        text(t.profitUnit, M + pw / 2 + 6, y + 8, { size: 8, color: "#a3a3a3" });
+        text(`${isLoss ? "- " : ""}${cur} ${fmt(Math.abs(c.profit))}`, M + pw / 2 + 6, y + 16, { size: 14, bold: true, color: isLoss ? "#f87171" : "#4ade80" });
+        text(`${t.profitMargin}: ${isLoss ? t.loss + " " : ""}${fmtP(Math.abs(c.margin))}`, M + 6, y + 25, { size: 8, color: "#a3a3a3" });
+      }
+      text(`${t.batchCost}: ${cur} ${fmt(c.totalCost)}`, W - M - 6, y + 25, { size: 8, color: "#a3a3a3", align: "right" });
+      y += 36;
+
+      // Cost breakdown
+      checkPage(20);
+      text(t.breakdown, M, y + 4, { size: 9, bold: true, color: "#525252" });
+      y += 8;
+      const segs = [
+        { l: t.lIng, v: c.ingredientCost }, { l: t.lPkg, v: c.packagingCost },
+        { l: t.lLab, v: c.laborCost }, { l: t.lOh, v: c.overheadCost }, { l: t.lDel, v: c.deliveryCost },
+      ].filter(s => s.v > 0);
+      const barY = y;
+      const barH = 4;
+      let barX = M;
+      const grays = ["#0a0a0a", "#404040", "#737373", "#a3a3a3", "#d4d4d4"];
+      segs.forEach((s, si) => {
+        const w = (s.v / c.totalCost) * pw;
+        doc.setFillColor(grays[si] || "#a3a3a3");
+        if (si === 0) doc.roundedRect(barX, barY, w, barH, 1, 1, "F");
+        else if (si === segs.length - 1) doc.roundedRect(barX, barY, w, barH, 1, 1, "F");
+        else doc.rect(barX, barY, w, barH, "F");
+        barX += w;
+      });
+      y += 8;
+      segs.forEach(s => {
+        checkPage(6);
+        tableRow(`${s.l}`, `${cur} ${fmt(s.v)} (${((s.v / c.totalCost) * 100).toFixed(0)}%)`, y);
+        y += 5;
+      });
+      y += 4;
+    }
+
+    // ── Ingredients Detail ──
+    const ings = p.ingredients.filter(i => i.name || i.purchaseCost);
+    if (ings.length) {
+      checkPage(14 + ings.length * 6);
+      drawLine(y); y += 4;
+      text(t.ingredients, M, y + 4, { size: 9, bold: true }); y += 9;
+      ings.forEach(ing => {
+        const line = `${ing.name || "—"}: ${cur} ${ing.purchaseCost || "0"} for ${ing.purchaseAmount || "?"} ${ing.purchaseUnit} → makes ${ing.yieldsAmount || "?"} ${ing.yieldsUnit}`;
+        text(line, M + 2, y, { size: 8, color: "#525252" });
+        y += 5;
+      });
+      y += 2;
+    }
+
+    // ── Packaging Detail ──
+    const pkgs = p.packaging.filter(pk => pk.name || pk.totalCost);
+    if (pkgs.length) {
+      checkPage(14 + pkgs.length * 6);
+      drawLine(y); y += 4;
+      text(t.packaging, M, y + 4, { size: 9, bold: true }); y += 9;
+      pkgs.forEach(pkg => {
+        const qty = parseFloat(pkg.totalQty) || 0;
+        const cost = parseFloat(pkg.totalCost) || 0;
+        const each = qty > 0 && cost > 0 ? ` (${fmt(cost / qty)} ${cur} each)` : "";
+        const line = `${pkg.name || "—"}: ${pkg.totalQty || "?"} qty for ${cur} ${pkg.totalCost || "0"}${each}, ${pkg.usedPerUnit} per product`;
+        text(line, M + 2, y, { size: 8, color: "#525252" });
+        y += 5;
+      });
+      y += 2;
+    }
+
+    // ── Labor Detail ──
+    if (parseFloat(p.monthlySalary) > 0) {
+      checkPage(18);
+      drawLine(y); y += 4;
+      text(t.labor, M, y + 4, { size: 9, bold: true }); y += 9;
+      tableRow(t.monthlySalary, `${cur} ${p.monthlySalary}`, y); y += 5;
+      tableRow(t.minsPerUnit, p.minsPerUnit || t.pdfNone, y); y += 5;
+      const wd = parseFloat(p.workDays) || 26, hd = parseFloat(p.hrsDay) || 8;
+      if (wd > 0 && hd > 0) { tableRow(t.perHr, `${cur} ${fmt(parseFloat(p.monthlySalary) / (wd * hd))}`, y); y += 5; }
+      y += 2;
+    }
+
+    // ── Overhead Detail ──
+    const ohs = p.overheads.filter(o => o.name || o.monthlyAmount);
+    if (ohs.length) {
+      checkPage(14 + ohs.length * 6);
+      drawLine(y); y += 4;
+      text(t.overhead, M, y + 4, { size: 9, bold: true }); y += 9;
+      ohs.forEach(oh => {
+        tableRow(oh.name || "—", `${cur} ${oh.monthlyAmount || "0"} /mo`, y); y += 5;
+      });
+      if (p.estUnits) { tableRow(t.estUnits, p.estUnits, y); y += 5; }
+      y += 2;
+    }
+
+    // ── Delivery Detail ──
+    if (parseFloat(p.delPerUnit) > 0 || parseFloat(p.delMonthly) > 0) {
+      checkPage(14);
+      drawLine(y); y += 4;
+      text(t.delivery, M, y + 4, { size: 9, bold: true }); y += 9;
+      if (parseFloat(p.delPerUnit) > 0) { tableRow(t.delPerUnit, `${cur} ${p.delPerUnit}`, y); y += 5; }
+      if (parseFloat(p.delMonthly) > 0) { tableRow(t.delMonthly, `${cur} ${p.delMonthly}`, y); y += 5; }
+      y += 2;
+    }
+
+    // ── Selling Price ──
+    if (parseFloat(p.sellPrice) > 0) {
+      checkPage(10);
+      drawLine(y); y += 4;
+      tableRow(t.sellPrice, `${cur} ${p.sellPrice}`, y, { color: "#0a0a0a" }); y += 6;
+    }
+
+    y += 10;
+  });
+
+  // ─── FOOTER ───
+  const pageCount = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setFontSize(8); doc.setTextColor("#a3a3a3");
+    doc.text("www.haseeb.app", W / 2, H - 10, { align: "center" });
+    doc.text(`${i} / ${pageCount}`, W - M, H - 10, { align: "right" });
+  }
+
+  doc.save("haseeb-cost-report.pdf");
+};
 
 /* ── Theme colors ── */
 const C = {
@@ -479,11 +686,18 @@ export default function App(){
   const [lang,setLang] = useState("en");
   const [products,setProducts] = useState([mkProd()]);
   const [showGuide,setShowGuide] = useState(true);
+  const [downloading,setDownloading] = useState(false);
   const t=T[lang]; const isRtl=lang==="ar";
 
   const uProd = (i,p) => { const n=[...products]; n[i]=p; setProducts(n); };
   const rProd = i => setProducts(products.filter((_,j)=>j!==i));
   const aProd = () => setProducts([...products.map(p=>({...p,isExpanded:false})),mkProd()]);
+
+  const handleDownload = async () => {
+    setDownloading(true);
+    try { await generatePDF(products, lang); } catch(e) { console.error(e); }
+    setDownloading(false);
+  };
 
   return(
     <div dir={isRtl?"rtl":"ltr"} style={{minHeight:"100vh",background:C.bg,fontFamily:isRtl?"'Segoe UI','Arial','Tahoma',sans-serif":"-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif"}}>
@@ -507,6 +721,12 @@ export default function App(){
 
         <div style={{marginTop:16}}>
           <Btn onClick={aProd} style={{width:"100%",justifyContent:"center",padding:"16px 20px",borderRadius:14,fontSize:15}}><Plus/> {t.addProduct}</Btn>
+        </div>
+
+        <div style={{marginTop:10}}>
+          <button onClick={handleDownload} disabled={downloading} style={{width:"100%",padding:"14px 20px",borderRadius:14,fontSize:14,fontWeight:600,cursor:downloading?"default":"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:"#fff",color:C.textPrimary,border:`1.5px solid ${C.cardBorder}`,opacity:downloading?0.6:1,transition:"all 0.15s"}}>
+            <DownloadIcon/> {downloading ? t.downloading : t.downloadPdf}
+          </button>
         </div>
 
         {showGuide&&<div style={{marginTop:20}}><Guide onClose={()=>setShowGuide(false)} lang={lang}/></div>}
